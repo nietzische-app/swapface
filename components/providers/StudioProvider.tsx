@@ -468,6 +468,74 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
     let jobId: string | null = null;
     try {
       const sourceImage = await toDataUrl(source.image);
+      if (clip.videoUrl) {
+        const blob = await fetch(clip.videoUrl).then((response) => response.blob());
+        const form = new FormData();
+        form.append(
+          "meta",
+          JSON.stringify({
+            sourceImage,
+            targetBox: target.box,
+            quality: policy.quality,
+            watermark: policy.watermark,
+          }),
+        );
+        form.append("video", blob, "clip.mp4");
+        const started = await fetch("http://127.0.0.1:3099/swap-video", { method: "POST", body: form });
+        const startedData = (await started.json()) as { id?: string; error?: string };
+        if (!started.ok || !startedData.id) {
+          throw new Error(startedData.error || "Video dönüşümü başlamadı");
+        }
+        const videoJobId = startedData.id;
+        while (runId.current === token) {
+          await new Promise((resolve) => window.setTimeout(resolve, 600));
+          const statusResponse = await fetch(`http://127.0.0.1:3099/swap-video/${videoJobId}`);
+          const status = (await statusResponse.json()) as {
+            progress?: number;
+            status?: string;
+            error?: string;
+            trimmed?: boolean;
+          };
+          if (!statusResponse.ok || status.status === "error") {
+            throw new Error(status.error || "Video dönüşümü başarısız");
+          }
+          if (status.status === "done") {
+            busy.current = false;
+            setState((current) => ({
+              ...current,
+              job: {
+                ...current.job,
+                progress: 100,
+                status: "done",
+                watermark: policy.watermark,
+                quality: policy.quality,
+                resultVideo: `http://127.0.0.1:3099/swap-video/${videoJobId}/file`,
+                clipId: clip.id,
+                targetFaceId: target.id,
+                sourceFaceId: source.id,
+              },
+              history: [
+                {
+                  id: videoJobId,
+                  clipTitle: clip.title,
+                  quality: policy.quality,
+                  watermark: policy.watermark,
+                  at: new Date().toLocaleString("tr-TR"),
+                },
+                ...current.history,
+              ].slice(0, 8),
+            }));
+            pushToast(status.trimmed ? "Videonun ilk 8 saniyesi hazır" : "Dönüşüm hazır");
+            return;
+          }
+          const progress = status.progress ?? 0;
+          setState((current) => {
+            if (current.job.status !== "running") return current;
+            return { ...current, job: { ...current.job, progress } };
+          });
+        }
+        return;
+      }
       const targetImage = clip.frame.startsWith("/media/") ? undefined : await toDataUrl(clip.frame);
       const response = await fetch("/api/swap", {
         method: "POST",

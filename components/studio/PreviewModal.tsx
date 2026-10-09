@@ -32,6 +32,19 @@ export function PreviewModal({ onClose }: { onClose: () => void }) {
     if (!clip) return;
     setBusy(true);
     try {
+      if (job.resultVideo) {
+        const response = await fetch(job.resultVideo);
+        if (!response.ok) throw new Error("Video indirilemedi");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `swapface-${clip.title}.mp4`;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+        pushToast(job.watermark ? "Filigranlı video indirildi" : "Filigransız video indirildi");
+        return;
+      }
       await exportPreview({
         imageUrl: job.resultImage || clip.frame,
         videoUrl: job.resultImage ? undefined : clip.videoUrl,

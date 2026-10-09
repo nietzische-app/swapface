@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
+import tempfile
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +35,8 @@ ANALYZER: FaceAnalysis | None = None
 SWAP_ANALYZER: FaceAnalysis | None = None
 SWAPPER = None
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+VIDEO_JOBS: dict[str, dict] = {}
+MAX_VIDEO_SECONDS = 8
 
 
 def analyzer() -> FaceAnalysis:
@@ -141,6 +145,168 @@ def swap_faces(payload: dict) -> tuple[str | None, str | None]:
     return image, None
 
 
+def fit_even(image, max_w: int, max_h: int):
+    height, width = image.shape[:2]
+    scale = min(max_w / width, max_h / height, 1)
+    width = max(2, int(width * scale) // 2 * 2)
+    height = max(2, int(height * scale) // 2 * 2)
+    if (image.shape[1], image.shape[0]) == (width, height):
+        return image
+    return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+
+
+def paint_watermark(frame):
+    height, width = frame.shape[:2]
+    scale = max(0.7, width / 900)
+    thickness = max(2, int(scale * 2))
+    origin = (24, height - 28)
+    cv2.putText(frame, "SWAPFACE", origin, cv2.FONT_HERSHEY_SIMPLEX, scale, (20, 16, 32), thickness + 2, cv2.LINE_AA)
+    cv2.putText(frame, "SWAPFACE", origin, cv2.FONT_HERSHEY_SIMPLEX, scale, (245, 245, 250), thickness, cv2.LINE_AA)
+    return frame
+
+
+def face_box(face, width: int, height: int) -> dict:
+    x1, y1, x2, y2 = [float(value) for value in face.bbox[:4]]
+    return {
+        "x": x1 / width * 100,
+        "y": y1 / height * 100,
+        "w": (x2 - x1) / width * 100,
+        "h": (y2 - y1) / height * 100,
+    }
+
+
+def open_encoder(width: int, height: int, fps: float, dest: Path):
+    try:
+        import imageio_ffmpeg
+    except ImportError as exc:
+        raise RuntimeError("Video kodlayıcı yok. .venv içinde pip install imageio-ffmpeg çalıştır.") from exc
+    command = [
+        imageio_ffmpeg.get_ffmpeg_exe(),
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        f"{fps:.3f}",
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(dest),
+    ]
+    return subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def run_video_job(job_id: str, src: Path, dest: Path, meta: dict) -> None:
+    job = VIDEO_JOBS[job_id]
+    encoder = None
+    cap = cv2.VideoCapture(str(src))
+    try:
+        if not cap.isOpened():
+            raise RuntimeError("Video açılmadı")
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 25)
+        fps = min(30.0, max(8.0, fps))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        limit = int(MAX_VIDEO_SECONDS * fps)
+        if total > 0:
+            job["trimmed"] = total > limit
+            limit = min(total, limit)
+        max_w, max_h = (1920, 1080) if meta.get("quality") == "1080p" else (1280, 720)
+        source = decode_image(str(meta.get("sourceImage") or ""))
+        if source is None:
+            raise RuntimeError("Kaynak yüz fotoğrafı yok")
+        source = limit_side(source, 1024)
+        with LOCK:
+            face_app, swapper = swap_models()
+            source_faces = face_app.get(source)
+        if not source_faces:
+            raise RuntimeError("Kaynak fotoğrafta yüz yok")
+        source_face = max(source_faces, key=lambda face: float(face.det_score))
+        if getattr(source_face, "normed_embedding", None) is None:
+            raise RuntimeError("Yüz modeli bu fotoğrafı çözemedi")
+        hint = meta.get("targetBox")
+        written = 0
+        while written < limit:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frame = fit_even(frame, max_w, max_h)
+            height, width = frame.shape[:2]
+            with LOCK:
+                faces = face_app.get(frame)
+                target = choose_target(faces, hint, width, height)
+                if target is not None:
+                    swapped = swapper.get(frame, target, source_face, paste_back=True)
+                    if swapped is not None:
+                        frame = swapped
+                        hint = face_box(target, width, height)
+            if meta.get("watermark"):
+                frame = paint_watermark(frame)
+            if encoder is None:
+                encoder = open_encoder(width, height, fps, dest)
+            if encoder.stdin is None:
+                raise RuntimeError("Video yazılamadı")
+            encoder.stdin.write(frame.tobytes())
+            written += 1
+            job["progress"] = max(1, min(99, round(written / max(limit, 1) * 100)))
+        if encoder is None or written == 0:
+            raise RuntimeError("Video karesi okunamadı")
+        encoder.stdin.close()
+        encoder.stdin = None
+        if encoder.wait() != 0 or not dest.is_file():
+            raise RuntimeError("Video yazılamadı")
+        job["progress"] = 100
+        job["status"] = "done"
+    except Exception as exc:
+        print("video swap failed:", exc)
+        job["status"] = "error"
+        job["error"] = str(exc)
+        if encoder is not None and encoder.stdin:
+            encoder.stdin.close()
+        if encoder is not None:
+            encoder.wait()
+    finally:
+        cap.release()
+
+
+def parse_multipart(content_type: str, body: bytes) -> dict[str, bytes]:
+    marker = content_type.split("boundary=", 1)[1].strip().strip('"')
+    parts: dict[str, bytes] = {}
+    for chunk in body.split(("--" + marker).encode("utf-8")):
+        if b"\r\n\r\n" not in chunk:
+            continue
+        header_blob, data = chunk.split(b"\r\n\r\n", 1)
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        header = header_blob.decode("utf-8", "replace")
+        if 'name="' not in header:
+            continue
+        name = header.split('name="', 1)[1].split('"', 1)[0]
+        parts[name] = data
+    return parts
+
+
+def start_video_job(meta: dict, video: bytes) -> str:
+    job_id = uuid.uuid4().hex
+    folder = Path(tempfile.mkdtemp(prefix="swapface-"))
+    src = folder / "input.bin"
+    dest = folder / "output.mp4"
+    src.write_bytes(video)
+    VIDEO_JOBS[job_id] = {"progress": 1, "status": "running", "error": None, "path": dest, "trimmed": False}
+    threading.Thread(target=run_video_job, args=(job_id, src, dest, meta), daemon=True).start()
+    return job_id
+
+
 def detect_clip(clip_id: str) -> tuple[list[dict] | None, str | None]:
     filename = CLIPS.get(clip_id)
     if filename is None:
@@ -184,15 +350,62 @@ def detect_clip(clip_id: str) -> tuple[list[dict] | None, str | None]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
     def do_GET(self) -> None:
-        if self.path.split("?", 1)[0].rstrip("/") != "/health":
-            self._send(404, {"error": "Bulunamadı"})
+        path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/health":
+            self._send(200, {"ok": True, "provider": "insightface"})
             return
-        self._send(200, {"ok": True, "provider": "insightface"})
+        if path.startswith("/swap-video/") and path.endswith("/file"):
+            job_id = path.split("/")[2]
+            job = VIDEO_JOBS.get(job_id)
+            if not job or job.get("status") != "done":
+                self._send(404, {"error": "Video hazır değil"})
+                return
+            self._send_file(Path(job["path"]))
+            return
+        if path.startswith("/swap-video/"):
+            job = VIDEO_JOBS.get(path.split("/")[2])
+            if not job:
+                self._send(404, {"error": "İş bulunamadı"})
+                return
+            self._send(
+                200,
+                {
+                    "progress": job["progress"],
+                    "status": job["status"],
+                    "error": job["error"],
+                    "trimmed": job["trimmed"],
+                },
+            )
+            return
+        self._send(404, {"error": "Bulunamadı"})
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")
+        content_type = self.headers.get("Content-Type", "")
         length = int(self.headers.get("Content-Length", "0") or "0")
+        if path == "/swap-video":
+            if "multipart/form-data" not in content_type or "boundary=" not in content_type:
+                self._send(400, {"error": "Video paketi eksik"})
+                return
+            parts = parse_multipart(content_type, self.rfile.read(length))
+            try:
+                meta = json.loads(parts.get("meta", b"{}").decode("utf-8"))
+            except json.JSONDecodeError:
+                self._send(400, {"error": "Geçersiz istek"})
+                return
+            video = parts.get("video")
+            if not video:
+                self._send(400, {"error": "Video dosyası yok"})
+                return
+            job_id = start_video_job(meta, video)
+            self._send(200, {"id": job_id})
+            return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
@@ -226,13 +439,45 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(404, {"error": "Bulunamadı"})
 
+    def _cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+
     def _send(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
+        self._cors()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_file(self, path: Path) -> None:
+        data = path.read_bytes()
+        size = len(data)
+        start, end = 0, size - 1
+        status = 200
+        range_header = self.headers.get("Range")
+        if range_header and range_header.startswith("bytes="):
+            piece = range_header.removeprefix("bytes=").split("-", 1)
+            if piece[0]:
+                start = int(piece[0])
+            if len(piece) > 1 and piece[1]:
+                end = int(piece[1])
+            end = min(end, size - 1)
+            status = 206
+        chunk = data[start : end + 1]
+        self.send_response(status)
+        self._cors()
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(len(chunk)))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        self.wfile.write(chunk)
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"{self.address_string()} {fmt % args}")

@@ -46,6 +46,7 @@ export type JobState = {
   targetFaceId?: string;
   sourceFaceId?: string;
   resultImage?: string;
+  resultVideo?: string;
 };
 
 export type HistoryItem = {
