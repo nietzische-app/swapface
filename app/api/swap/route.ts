@@ -33,6 +33,9 @@ export async function POST(request: Request) {
     clipId?: string;
     targetFaceId?: string;
     sourceFaceId?: string;
+    sourceImage?: string;
+    targetImage?: string;
+    targetBox?: { x: number; y: number; w: number; h: number };
   };
 
   try {
@@ -63,6 +66,9 @@ export async function POST(request: Request) {
       targetFaceId: body.targetFaceId,
       sourceFaceId: body.sourceFaceId,
       plan,
+      sourceImage: body.sourceImage,
+      targetImage: body.targetImage,
+      targetBox: body.targetBox,
     });
 
     const job: StoredJob = {
@@ -85,8 +91,9 @@ export async function POST(request: Request) {
       watermark: job.watermark,
       quality: job.quality,
       cost: job.cost,
-      status: "queued",
-      progress: 0,
+      status: created.image ? "done" : "queued",
+      progress: created.image ? 100 : 0,
+      image: created.image,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Dönüşüm başlatılamadı";

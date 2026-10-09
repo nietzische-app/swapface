@@ -24,7 +24,8 @@ export function PreviewStage({
   onPlay?: () => void;
   showPlay?: boolean;
 }) {
-  const showResult = job.status === "done" && source && targetBox;
+  const swapped = job.status === "done" ? job.resultImage : undefined;
+  const showResult = Boolean(swapped) || (job.status === "done" && source && targetBox);
   const showWatermark = Boolean(showResult && job.watermark);
   const frameRef = useRef<HTMLDivElement>(null);
   const containerRatio = useContainerRatio(frameRef);
@@ -33,7 +34,19 @@ export function PreviewStage({
 
   return (
     <div ref={frameRef} className="relative h-full min-h-[120px] overflow-hidden rounded-2xl bg-black">
-      {clip?.videoUrl && job.status === "done" ? (
+      {swapped ? (
+        <img
+          src={swapped}
+          alt=""
+          className="h-full w-full object-cover"
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth && image.naturalHeight) {
+              setImageRatio(image.naturalWidth / image.naturalHeight);
+            }
+          }}
+        />
+      ) : clip?.videoUrl && job.status === "done" ? (
         <video
           src={clip.videoUrl}
           className="h-full w-full object-cover"
@@ -61,7 +74,7 @@ export function PreviewStage({
           }}
         />
       )}
-      {showResult && mapped ? (
+      {showResult && mapped && !swapped && source ? (
         <img
           src={source.image}
           alt=""

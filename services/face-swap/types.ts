@@ -1,10 +1,13 @@
-import type { Plan, Quality } from "@/lib/types";
+import type { FaceBox, Plan, Quality } from "@/lib/types";
 
 export type SwapJobRequest = {
   clipId: string;
   targetFaceId: string;
   sourceFaceId: string;
   plan: Plan;
+  sourceImage?: string;
+  targetImage?: string;
+  targetBox?: FaceBox;
 };
 
 export type SwapJob = {
@@ -14,6 +17,7 @@ export type SwapJob = {
   quality: Quality;
   cost: number;
   status: "queued";
+  image?: string;
 };
 
 export interface SwapProvider {

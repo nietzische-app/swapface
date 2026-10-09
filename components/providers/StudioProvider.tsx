@@ -78,6 +78,29 @@ function cloneClips(clips: Clip[]): Clip[] {
   }));
 }
 
+function toDataUrl(src: string) {
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    if (!src.startsWith("blob:") && !src.startsWith("data:")) image.crossOrigin = "anonymous";
+    image.onload = () => {
+      const maxSide = 1280;
+      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Fotoğraf okunamadı"));
+        return;
+      }
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.9));
+    };
+    image.onerror = () => reject(new Error("Fotoğraf okunamadı"));
+    image.src = src;
+  });
+}
+
 function idleJob(plan: Plan): JobState {
   const policy = resolveExportPolicy(plan);
   return {
@@ -444,6 +467,8 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
 
     let jobId: string | null = null;
     try {
+      const sourceImage = await toDataUrl(source.image);
+      const targetImage = clip.frame.startsWith("/media/") ? undefined : await toDataUrl(clip.frame);
       const response = await fetch("/api/swap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -454,11 +479,15 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
           clipId: clip.id,
           targetFaceId: target.id,
           sourceFaceId: source.id,
+          sourceImage,
+          targetImage,
+          targetBox: target.box,
         }),
       });
       const data = (await response.json()) as {
         id?: string;
         error?: string;
+        image?: string;
         watermark?: boolean;
         quality?: JobState["quality"];
       };
@@ -467,6 +496,35 @@ export function StudioProvider({ children }: { children: React.ReactNode }) {
       }
       jobId = data.id;
       if (runId.current !== token) return;
+      if (data.image) {
+        busy.current = false;
+        setState((current) => ({
+          ...current,
+          job: {
+            ...current.job,
+            progress: 100,
+            status: "done",
+            watermark: data.watermark ?? policy.watermark,
+            quality: data.quality ?? policy.quality,
+            resultImage: data.image,
+            clipId: clip.id,
+            targetFaceId: target.id,
+            sourceFaceId: source.id,
+          },
+          history: [
+            {
+              id: data.id || uid("job"),
+              clipTitle: clip.title,
+              quality: data.quality ?? policy.quality,
+              watermark: data.watermark ?? policy.watermark,
+              at: new Date().toLocaleString("tr-TR"),
+            },
+            ...current.history,
+          ].slice(0, 8),
+        }));
+        pushToast("Dönüşüm hazır");
+        return;
+      }
       setState((current) => ({
         ...current,
         job: {

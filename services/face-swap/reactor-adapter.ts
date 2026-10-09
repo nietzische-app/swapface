@@ -26,14 +26,16 @@ export const reactorAdapter: SwapProvider = {
         plan: input.plan,
         quality: policy.quality,
         watermark: policy.watermark,
+        sourceImage: input.sourceImage,
+        targetImage: input.targetImage,
+        targetBox: input.targetBox,
       }),
     });
 
+    const data = (await response.json().catch(() => ({}))) as { id?: string; image?: string; error?: string };
     if (!response.ok) {
-      throw new Error("ReActor servisi yanıt vermedi");
+      throw new Error(data.error || "Yerel dönüşüm servisi yanıt vermedi");
     }
-
-    const data = (await response.json()) as { id?: string };
     return {
       id: data.id ?? crypto.randomUUID(),
       provider: "reactor",
@@ -41,6 +43,7 @@ export const reactorAdapter: SwapProvider = {
       quality: policy.quality,
       cost: policy.cost,
       status: "queued",
+      image: data.image,
     };
   },
 };

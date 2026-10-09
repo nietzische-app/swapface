@@ -33,12 +33,12 @@ export function PreviewModal({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       await exportPreview({
-        imageUrl: clip.frame,
-        videoUrl: clip.videoUrl,
+        imageUrl: job.resultImage || clip.frame,
+        videoUrl: job.resultImage ? undefined : clip.videoUrl,
         quality: job.quality,
         watermark: job.watermark,
-        faceImageUrl: job.status === "done" ? source?.image : undefined,
-        box: job.status === "done" ? target?.box : undefined,
+        faceImageUrl: job.resultImage || job.status !== "done" ? undefined : source?.image,
+        box: job.resultImage || job.status !== "done" ? undefined : target?.box,
         filenameBase: `swapface-${clip.title}`,
       });
       pushToast(job.watermark ? "Filigranlı video indirildi" : "Filigransız 1080p video indirildi");
