@@ -9,6 +9,16 @@ npm install
 npm run dev
 ```
 
+Hetzner üzerinde üretim kopyası:
+
+```bash
+git clone https://github.com/nietzische-app/swapface.git
+cd swapface
+docker compose up -d --build
+```
+
+Site `http://SUNUCU_IP:3000` adresinde açılır. Bu adım yalnızca arayüzü ve demo API'yi çalıştırır. Yüz tespiti ve dönüşüm sonraki adımda ayrı bir servis olarak bağlanır.
+
 Uygulama [http://localhost:3000](http://localhost:3000) adresinde açılır. Varsayılan demo hesap `M. Demir`, 120 kredi, Standart plandır.
 
 ## Dizin
