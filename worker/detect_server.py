@@ -351,6 +351,36 @@ def describe_faces(image, clip_id: str, avatar: str | None) -> list[dict]:
     return faces
 
 
+def detect_video_file(path: Path, clip_id: str) -> tuple[list[dict] | None, str | None, float]:
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return None, "Video açılmadı", 0
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 25) or 25
+        if total > 1:
+            indexes = sorted({min(total - 1, max(0, int(total * part))) for part in (0.08, 0.2, 0.35, 0.5, 0.68, 0.85)})
+        else:
+            indexes = [0]
+        best: list[dict] = []
+        best_score = -1.0
+        best_at = 0.0
+        for index in indexes:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+            faces = describe_faces(limit_side(frame, 960), clip_id, None)
+            score = sum(float(face["box"]["w"]) * float(face["box"]["h"]) for face in faces)
+            if score > best_score:
+                best = faces
+                best_score = score
+                best_at = index / fps
+        return best, None, best_at
+    finally:
+        cap.release()
+
+
 def detect_clip(clip_id: str, image_value: str | None = None) -> tuple[list[dict] | None, str | None]:
     if isinstance(image_value, str) and image_value:
         image = decode_image(image_value)
@@ -423,6 +453,31 @@ class Handler(BaseHTTPRequestHandler):
             job_id = start_video_job(meta, video)
             self._send(200, {"id": job_id})
             return
+        if path == "/detect-video":
+            if "multipart/form-data" not in content_type or "boundary=" not in content_type:
+                self._send(400, {"error": "Video paketi eksik"})
+                return
+            parts = parse_multipart(content_type, self.rfile.read(length))
+            video = parts.get("video")
+            if not video:
+                self._send(400, {"error": "Video dosyası yok"})
+                return
+            folder = Path(tempfile.mkdtemp(prefix="swapface-detect-"))
+            src = folder / "input.bin"
+            src.write_bytes(video)
+            try:
+                faces, error, at = detect_video_file(src, "upload")
+            except Exception as exc:
+                print("detect video failed:", exc)
+                self._send(500, {"error": "Yüz taraması başarısız"})
+                return
+            finally:
+                src.unlink(missing_ok=True)
+            if error:
+                self._send(422, {"error": error})
+                return
+            self._send(200, {"faces": faces or [], "at": at})
+            return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
@@ -434,7 +489,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "Klip seçilmedi"})
                 return
             image_value = payload.get("image")
-            faces, error = detect_clip(clip_id, image_value if isinstance(image_value, str) else None)
+            try:
+                faces, error = detect_clip(clip_id, image_value if isinstance(image_value, str) else None)
+            except Exception as exc:
+                print("detect failed:", exc)
+                self._send(500, {"error": "Yüz taraması başarısız"})
+                return
             if error:
                 self._send(404, {"error": error})
                 return

@@ -14,15 +14,20 @@ export const insightFaceAdapter: FaceDetector = {
       throw new Error("INSIGHTFACE_API_URL tanımlı değil");
     }
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clipId: input.clipId, image: input.image }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clipId: input.clipId, image: input.image }),
+      });
+    } catch {
+      throw new Error("Yerel yüz tarayıcısı kapalı. Worker penceresini kontrol et.");
+    }
 
     const data = (await response.json().catch(() => ({}))) as { faces?: DetectedFace[]; error?: string };
     if (!response.ok) {
-      throw new Error(data.error || "InsightFace servisi yanıt vermedi");
+      throw new Error(data.error || "Yerel yüz tarayıcısı bu kareye cevap vermedi.");
     }
     return {
       provider: "insightface",

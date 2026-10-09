@@ -14,27 +14,43 @@ export function PersonSelectStep() {
   const [scanning, setScanning] = useState(false);
   const [imageRatio, setImageRatio] = useState(16 / 9);
   const frameRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const containerRatio = useContainerRatio(frameRef);
 
   async function rescan() {
     if (!selectedClip || scanning) return;
     setScanning(true);
     try {
-      const image = selectedClip.frame.startsWith("/media/")
-        ? undefined
-        : await toDataUrl(selectedClip.frame);
-      const response = await fetch("/api/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clipId: selectedClip.id, image }),
-      });
-      const data = (await response.json()) as { faces?: DetectedFace[]; error?: string };
+      let response: Response;
+      if (selectedClip.videoUrl) {
+        const blob = await fetch(selectedClip.videoUrl).then((item) => item.blob());
+        const form = new FormData();
+        form.append("video", blob, "clip.mp4");
+        try {
+          response = await fetch("http://127.0.0.1:3099/detect-video", { method: "POST", body: form });
+        } catch {
+          pushToast("Yerel yüz tarayıcısı kapalı. Worker penceresini kontrol et.");
+          return;
+        }
+      } else {
+        const image = selectedClip.frame.startsWith("/media/") ? undefined : await toDataUrl(selectedClip.frame);
+        response = await fetch("/api/detect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clipId: selectedClip.id, image }),
+        });
+      }
+      const data = (await response.json()) as { faces?: DetectedFace[]; error?: string; at?: number };
       if (!response.ok || !data.faces) {
         pushToast(data.error || "Tarama başarısız");
         return;
       }
       replaceClipFaces(selectedClip.id, data.faces);
-      pushToast(`${data.faces.length} yüz bulundu`);
+      if (videoRef.current && typeof data.at === "number") {
+        videoRef.current.currentTime = data.at;
+        videoRef.current.pause();
+      }
+      pushToast(data.faces.length ? `${data.faces.length} yüz bulundu` : "Bu karelerde yüz bulunamadı");
     } catch {
       pushToast("Tarama başarısız");
     } finally {
@@ -62,6 +78,7 @@ export function PersonSelectStep() {
         {selectedClip ? (
           selectedClip.videoUrl ? (
             <video
+              ref={videoRef}
               key={selectedClip.videoUrl}
               src={selectedClip.videoUrl}
               poster={selectedClip.frame}
