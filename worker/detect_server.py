@@ -36,7 +36,6 @@ SWAP_ANALYZER: FaceAnalysis | None = None
 SWAPPER = None
 PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 VIDEO_JOBS: dict[str, dict] = {}
-MAX_VIDEO_SECONDS = 8
 
 
 def analyzer() -> FaceAnalysis:
@@ -215,12 +214,9 @@ def run_video_job(job_id: str, src: Path, dest: Path, meta: dict) -> None:
         if not cap.isOpened():
             raise RuntimeError("Video açılmadı")
         fps = float(cap.get(cv2.CAP_PROP_FPS) or 25)
-        fps = min(30.0, max(8.0, fps))
+        if fps < 1 or fps > 120:
+            fps = 25
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        limit = int(MAX_VIDEO_SECONDS * fps)
-        if total > 0:
-            job["trimmed"] = total > limit
-            limit = min(total, limit)
         max_w, max_h = (1920, 1080) if meta.get("quality") == "1080p" else (1280, 720)
         source = decode_image(str(meta.get("sourceImage") or ""))
         if source is None:
@@ -236,7 +232,7 @@ def run_video_job(job_id: str, src: Path, dest: Path, meta: dict) -> None:
             raise RuntimeError("Yüz modeli bu fotoğrafı çözemedi")
         hint = meta.get("targetBox")
         written = 0
-        while written < limit:
+        while True:
             ok, frame = cap.read()
             if not ok:
                 break
@@ -258,7 +254,8 @@ def run_video_job(job_id: str, src: Path, dest: Path, meta: dict) -> None:
                 raise RuntimeError("Video yazılamadı")
             encoder.stdin.write(frame.tobytes())
             written += 1
-            job["progress"] = max(1, min(99, round(written / max(limit, 1) * 100)))
+            if total > 0:
+                job["progress"] = max(1, min(99, round(written / total * 100)))
         if encoder is None or written == 0:
             raise RuntimeError("Video karesi okunamadı")
         encoder.stdin.close()
