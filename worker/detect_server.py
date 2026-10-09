@@ -304,17 +304,22 @@ def start_video_job(meta: dict, video: bytes) -> str:
     return job_id
 
 
-def detect_clip(clip_id: str) -> tuple[list[dict] | None, str | None]:
-    filename = CLIPS.get(clip_id)
-    if filename is None:
-        return None, "Bu klip worker üzerinde yok"
-    image = cv2.imread(str(ROOT / "public" / "media" / filename))
-    if image is None:
-        return None, "Kare okunamadı"
+def face_avatar(image, x1: float, y1: float, x2: float, y2: float) -> str:
+    height, width = image.shape[:2]
+    left, top = int(max(0, x1)), int(max(0, y1))
+    right, bottom = int(min(width, x2)), int(min(height, y2))
+    if right - left < 2 or bottom - top < 2:
+        return ""
+    ok, encoded = cv2.imencode(".jpg", image[top:bottom, left:right], [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    if not ok:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
+
+
+def describe_faces(image, clip_id: str, avatar: str | None) -> list[dict]:
     height, width = image.shape[:2]
     with LOCK:
         found = analyzer().get(image)
-
     faces = []
     ranked = sorted(found, key=lambda face: float(face.det_score), reverse=True)
     for index, face in enumerate(ranked, start=1):
@@ -339,11 +344,26 @@ def detect_clip(clip_id: str) -> tuple[list[dict] | None, str | None]:
                     "w": round(box_w, 2),
                     "h": round(box_h, 2),
                 },
-                "avatar": f"/media/{filename}",
+                "avatar": avatar or face_avatar(image, x1, y1, x2, y2),
                 "avatarPosition": f"{box_x + box_w / 2:.0f}% {box_y + box_h / 2:.0f}%",
             }
         )
-    return faces, None
+    return faces
+
+
+def detect_clip(clip_id: str, image_value: str | None = None) -> tuple[list[dict] | None, str | None]:
+    if isinstance(image_value, str) and image_value:
+        image = decode_image(image_value)
+        if image is None:
+            return None, "Kare okunamadı"
+        return describe_faces(limit_side(image, 1280), clip_id, None), None
+    filename = CLIPS.get(clip_id)
+    if filename is None:
+        return None, "Bu klip worker üzerinde yok"
+    image = cv2.imread(str(ROOT / "public" / "media" / filename))
+    if image is None:
+        return None, "Kare okunamadı"
+    return describe_faces(image, clip_id, f"/media/{filename}"), None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -413,7 +433,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(clip_id, str) or not clip_id:
                 self._send(400, {"error": "Klip seçilmedi"})
                 return
-            faces, error = detect_clip(clip_id)
+            image_value = payload.get("image")
+            faces, error = detect_clip(clip_id, image_value if isinstance(image_value, str) else None)
             if error:
                 self._send(404, {"error": error})
                 return

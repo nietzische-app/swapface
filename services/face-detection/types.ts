@@ -2,6 +2,7 @@ import type { DetectedFace } from "@/lib/types";
 
 export type DetectInput = {
   clipId?: string;
+  image?: string;
 };
 
 export type DetectResult = {

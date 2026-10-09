@@ -6,7 +6,7 @@ import { useStudio } from "@/components/providers/StudioProvider";
 import { useContainerRatio } from "@/components/studio/useContainerRatio";
 import { FaceThumb } from "@/components/ui/FaceThumb";
 import { Panel } from "@/components/ui/Panel";
-import { cn, mapCoverBox } from "@/lib/utils";
+import { cn, mapCoverBox, toDataUrl } from "@/lib/utils";
 import type { DetectedFace } from "@/lib/types";
 
 export function PersonSelectStep() {
@@ -20,10 +20,13 @@ export function PersonSelectStep() {
     if (!selectedClip || scanning) return;
     setScanning(true);
     try {
+      const image = selectedClip.frame.startsWith("/media/")
+        ? undefined
+        : await toDataUrl(selectedClip.frame);
       const response = await fetch("/api/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clipId: selectedClip.id }),
+        body: JSON.stringify({ clipId: selectedClip.id, image }),
       });
       const data = (await response.json()) as { faces?: DetectedFace[]; error?: string };
       if (!response.ok || !data.faces) {

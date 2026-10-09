@@ -17,14 +17,13 @@ export const insightFaceAdapter: FaceDetector = {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clipId: input.clipId }),
+      body: JSON.stringify({ clipId: input.clipId, image: input.image }),
     });
 
+    const data = (await response.json().catch(() => ({}))) as { faces?: DetectedFace[]; error?: string };
     if (!response.ok) {
-      throw new Error("InsightFace servisi yanıt vermedi");
+      throw new Error(data.error || "InsightFace servisi yanıt vermedi");
     }
-
-    const data = (await response.json()) as { faces?: DetectedFace[] };
     return {
       provider: "insightface",
       faces: data.faces ?? [],

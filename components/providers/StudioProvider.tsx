@@ -18,7 +18,7 @@ import type {
   LibraryFace,
   Plan,
 } from "@/lib/types";
-import { uid } from "@/lib/utils";
+import { toDataUrl, uid } from "@/lib/utils";
 import { resolveExportPolicy } from "@/services/credits/policy";
 
 const STORAGE_KEY = "swapface-demo";
@@ -76,29 +76,6 @@ function cloneClips(clips: Clip[]): Clip[] {
     ...clip,
     faces: clip.faces.map((face) => ({ ...face, box: { ...face.box } })),
   }));
-}
-
-function toDataUrl(src: string) {
-  return new Promise<string>((resolve, reject) => {
-    const image = new Image();
-    if (!src.startsWith("blob:") && !src.startsWith("data:")) image.crossOrigin = "anonymous";
-    image.onload = () => {
-      const maxSide = 1280;
-      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Fotoğraf okunamadı"));
-        return;
-      }
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.9));
-    };
-    image.onerror = () => reject(new Error("Fotoğraf okunamadı"));
-    image.src = src;
-  });
 }
 
 function idleJob(plan: Plan): JobState {
