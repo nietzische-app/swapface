@@ -4,16 +4,14 @@ services:
   web:
     container_name: swapface-web
     build: .
-    ports:
-      - "127.0.0.1:${SWAPFACE_PORT:-3010}:3000"
+    # Host networking skips Docker's published-port proxy. On Docker 29 that
+    # proxy accepts 127.0.0.1:3010 and then resets the connection. The process
+    # binds only 127.0.0.1, so no public port is opened and other projects are
+    # left untouched. Do not add a `ports:` entry: it cannot combine with this.
+    network_mode: host
     environment:
-      HOSTNAME: 0.0.0.0
+      PORT: ${SWAPFACE_PORT:-3010}
+      BIND_HOST: 127.0.0.1
       INSIGHTFACE_API_URL: ${INSIGHTFACE_API_URL:-}
       REACTOR_API_URL: ${REACTOR_API_URL:-}
     restart: unless-stopped
-    networks:
-      - swapface
-
-networks:
-  swapface:
-    name: swapface

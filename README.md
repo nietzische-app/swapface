@@ -15,9 +15,12 @@ Hetzner üzerinde, aynı makinedeki diğer projelere dokunmadan:
 git clone https://github.com/nietzische-app/swapface.git
 cd swapface
 docker compose up -d --build
+curl -sI http://127.0.0.1:3010
 ```
 
-Konteyner yalnızca `127.0.0.1:3010` adresini dinler. Dışarıya port açılmaz, mevcut nginx siteleri ve diğer konteynerler değiştirilmez. Kontrol: `curl -I http://127.0.0.1:3010`. Durdurmak için bu klasörde `docker compose down`. Bu adım yalnızca arayüzü ve demo API'yi çalıştırır.
+Güncellemek için aynı klasörde `git pull` ve ardından yine `docker compose up -d --build`. İlk satır `HTTP/1.1 200` olmalı.
+
+Süreç doğrudan makinenin `127.0.0.1:3010` adresine bağlanır. Docker portu yayınlamaz; Docker 29'da `127.0.0.1` port yönlendirmesi bağlantıyı kabul edip sıfırladığı için bu yol kullanılmıyor. Dışarıya port açılmaz. nginx, güvenlik duvarı, Docker daemon ayarı ve diğer konteynerler değiştirilmez. Durdurmak için yalnızca bu klasörde `docker compose down`. Bu adım yalnızca arayüzü ve demo API'yi çalıştırır.
 
 Uygulama [http://localhost:3000](http://localhost:3000) adresinde açılır. Varsayılan demo hesap `M. Demir`, 120 kredi, Standart plandır.
 
