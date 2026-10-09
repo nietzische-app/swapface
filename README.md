@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Hetzner üzerinde üretim kopyası:
+Hetzner üzerinde, aynı makinedeki diğer projelere dokunmadan:
 
 ```bash
 git clone https://github.com/nietzische-app/swapface.git
@@ -17,7 +17,7 @@ cd swapface
 docker compose up -d --build
 ```
 
-Site `http://SUNUCU_IP:3000` adresinde açılır. Bu adım yalnızca arayüzü ve demo API'yi çalıştırır. Yüz tespiti ve dönüşüm sonraki adımda ayrı bir servis olarak bağlanır.
+Konteyner yalnızca `127.0.0.1:3010` adresini dinler. Dışarıya port açılmaz, mevcut nginx siteleri ve diğer konteynerler değiştirilmez. Kontrol: `curl -I http://127.0.0.1:3010`. Durdurmak için bu klasörde `docker compose down`. Bu adım yalnızca arayüzü ve demo API'yi çalıştırır.
 
 Uygulama [http://localhost:3000](http://localhost:3000) adresinde açılır. Varsayılan demo hesap `M. Demir`, 120 kredi, Standart plandır.
 
